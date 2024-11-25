@@ -330,7 +330,6 @@ static inline void parallel(int nthr, const std::function<void(int, int)> &f) {
 #elif DNNL_CPU_THREADING_RUNTIME == DNNL_RUNTIME_THREADPOOL
     using namespace dnnl::impl::threadpool_utils;
     dnnl::threadpool_interop::threadpool_iface *tp = get_active_threadpool();
-    dnnl::threadpool_interop::threadpool_iface *tp_null = std::nullptr_t;
     if (!tp || dnnl_in_parallel()) {
         threadpool_utils::deactivate_threadpool();
         for (int ithr = 0; ithr < nthr; ithr++) {
@@ -342,21 +341,10 @@ static inline void parallel(int nthr, const std::function<void(int, int)> &f) {
                 & dnnl::threadpool_interop::threadpool_iface::ASYNCHRONOUS;
         counting_barrier_t b;
         if (async) b.init(nthr);
-        tp->parallel_for(nthr, [&, tp_null](int ithr, int nthr) {
-            bool is_master = threadpool_utils::get_active_threadpool() == tp;
-            if (!is_master) {
-                threadpool_utils::activate_threadpool(tp);
-#if defined(DNNL_ENABLE_ITT_TASKS)
-                if (itt_enable) itt::primitive_task_start(task_primitive_kind);
-#endif
-            }
+        tp->parallel_for(nthr, [&, tp](int ithr, int nthr) {
+            threadpool_utils::deactivate_threadpool(); // Disable nested parallel_for for threadpool
             f(ithr, nthr);
-            if (!is_master) {
-#if defined(DNNL_ENABLE_ITT_TASKS)
-                if (itt_enable) itt::primitive_task_end();
-#endif
-                threadpool_utils::deactivate_threadpool();
-            }
+            threadpool_utils::activate_threadpool(tp); // Restore threadpool
             if (async) b.notify();
         });
         if (async) b.wait();
